@@ -1,0 +1,4 @@
+interface:
+  display_name: "缠论 × 威科夫股票分析"
+  short_description: "以结构与量价证据生成条件化个股分析和做T计划"
+  default_prompt: "Use $analyze-stocks-chan-wyckoff to analyze this stock with Chan structure, Wyckoff volume-price evidence, scenarios, and a risk-bounded T-trading plan."
