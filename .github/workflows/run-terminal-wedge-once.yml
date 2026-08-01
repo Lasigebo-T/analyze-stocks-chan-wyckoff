@@ -1,4 +1,4 @@
-name: Diagnose A-Share Universe Sources
+name: Diagnose A-Share Market Data
 
 on:
   push:
@@ -25,90 +25,88 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install diagnostic dependencies
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install pandas requests openpyxl akshare pytdx
+      - name: Install dependencies
+        run: python -m pip install pandas requests openpyxl pytdx
 
-      - name: Diagnose universe endpoints
+      - name: Test HTTP and TDX sources
         env:
           PYTHONUNBUFFERED: '1'
         run: |
           mkdir -p scan_results/terminal_wedge_20260801
-          python - <<'PY' | tee scan_results/terminal_wedge_20260801/universe_diagnostics.txt
-          import json, traceback
+          python - <<'PY' 2>&1 | tee scan_results/terminal_wedge_20260801/market_data_diagnostics.txt
+          import traceback, requests
           import pandas as pd
-          import requests
+          from pytdx.hq import TdxHq_API
 
-          print('=== Eastmoney clist ===')
-          url='https://82.push2.eastmoney.com/api/qt/clist/get'
-          params={
-              'pn':1,'pz':6000,'po':1,'np':1,'fltt':2,'invt':2,'fid':'f3',
-              'fs':'m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23',
-              'fields':'f12,f14,f2,f3,f5,f6,f8,f9,f20,f21'
-          }
-          try:
-              r=requests.get(url,params=params,headers={'User-Agent':'Mozilla/5.0','Referer':'https://quote.eastmoney.com/'},timeout=20)
-              print('status',r.status_code,'len',len(r.content),'url',r.url)
-              print('text head',repr(r.text[:500]))
-              j=r.json(); print('top keys',list(j)[:20]); d=(j.get('data') or {}); print('data keys',list(d)[:20])
-              diff=d.get('diff'); print('diff type',type(diff).__name__,'len',len(diff) if diff is not None else None)
-              if isinstance(diff,dict): print('first dict item',next(iter(diff.items()),None))
-              elif isinstance(diff,list): print('first list item',diff[:1])
-          except Exception:
-              traceback.print_exc()
+          print('=== HTTP probes ===', flush=True)
+          urls=[
+            ('tencent','https://web.ifzq.gtimg.cn/appstock/app/fqkline/get',{'param':'sh600519,day,,,20,qfq'}),
+            ('eastmoney','https://push2his.eastmoney.com/api/qt/stock/kline/get',{'secid':'1.600519','klt':101,'fqt':1,'lmt':20,'end':20500101,'fields1':'f1,f2,f3,f4,f5,f6','fields2':'f51,f52,f53,f54,f55,f56,f57'}),
+            ('universe','https://82.push2.eastmoney.com/api/qt/clist/get',{'pn':1,'pz':10,'po':1,'np':1,'fltt':2,'invt':2,'fid':'f3','fs':'m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23','fields':'f12,f14,f2'})
+          ]
+          for name,url,params in urls:
+            try:
+              r=requests.get(url,params=params,headers={'User-Agent':'Mozilla/5.0','Referer':'https://quote.eastmoney.com/'},timeout=15)
+              print(name,'status',r.status_code,'bytes',len(r.content),'head',repr(r.text[:250]),flush=True)
+            except Exception:
+              print(name,'FAILED',flush=True); traceback.print_exc()
 
-          print('\n=== Public indicator workbook ===')
+          print('\n=== workbook probe ===', flush=True)
           raw='https://raw.githubusercontent.com/89529738/ashare-public-data/main/data/股票池合并_核准_技术指标_latest.xlsx'
           try:
-              xf=pd.ExcelFile(raw)
-              print('sheets',xf.sheet_names)
-              for sheet in xf.sheet_names[:3]:
-                  df=pd.read_excel(raw,sheet_name=sheet,nrows=5,dtype=str)
-                  print('sheet',sheet,'shape',df.shape)
-                  print('columns',list(map(str,df.columns)))
-                  print(df.head().to_string(index=False))
+            r=requests.get(raw,timeout=30); print('raw status',r.status_code,'bytes',len(r.content),flush=True)
+            open('/tmp/ind.xlsx','wb').write(r.content)
+            xf=pd.ExcelFile('/tmp/ind.xlsx'); print('sheets',xf.sheet_names,flush=True)
+            df=pd.read_excel('/tmp/ind.xlsx',nrows=5,dtype=str)
+            print('columns',list(df.columns),flush=True); print(df.to_string(index=False),flush=True)
           except Exception:
-              traceback.print_exc()
+            traceback.print_exc()
 
-          print('\n=== AKShare lists ===')
-          try:
-              import akshare as ak
-              for fn in ('stock_info_a_code_name','stock_zh_a_spot_em'):
-                  try:
-                      f=getattr(ak,fn); df=f(); print(fn,'shape',df.shape,'columns',list(df.columns)); print(df.head().to_string(index=False))
-                  except Exception as e:
-                      print(fn,'FAILED',type(e).__name__,str(e)); traceback.print_exc(limit=2)
-          except Exception:
-              traceback.print_exc()
+          print('\n=== pytdx robust probes ===', flush=True)
+          servers=[('124.71.187.72',7709),('119.147.212.81',7709),('47.103.48.45',7709),('218.108.47.69',7709),('106.14.95.149',7711),('115.238.56.198',7709)]
+          for market in (0,1):
+            print('MARKET',market,flush=True)
+            success=False
+            for host,port in servers:
+              api=TdxHq_API(heartbeat=False,auto_retry=False,raise_exception=True)
+              try:
+                api.connect(host,port,time_out=4)
+                count=api.get_security_count(market)
+                rows=[]
+                for start in (0,1000,2000,3000,4000,5000):
+                  chunk=api.get_security_list(market,start) or []
+                  rows.extend(chunk)
+                  print(host,port,'start',start,'chunk',len(chunk),flush=True)
+                  if len(chunk)<1000: break
+                print(host,port,'count',count,'fetched',len(rows),'sample',rows[:5],flush=True)
+                filt=[x for x in rows if str(x.get('code','')).startswith(('000','001','002','003','600','601','603','605'))]
+                print('filtered',len(filt),'sample',filt[:10],flush=True)
+                api.disconnect(); success=True; break
+              except Exception as e:
+                print(host,port,'FAILED',type(e).__name__,str(e),flush=True)
+                try: api.disconnect()
+                except Exception: pass
+            print('success',success,flush=True)
 
-          print('\n=== pytdx code tables ===')
-          try:
-              from pytdx.hq import TdxHq_API
-              servers=[('119.147.212.81',7709),('47.103.48.45',7709),('124.71.187.72',7709),('218.108.47.69',7709)]
-              for host,port in servers:
-                  api=TdxHq_API(heartbeat=True,auto_retry=True,raise_exception=True)
-                  try:
-                      ok=api.connect(host,port,time_out=3)
-                      print(host,port,'connect',ok)
-                      if ok:
-                          for market in (0,1):
-                              count=api.get_security_count(market)
-                              first=api.get_security_list(market,0)
-                              print(' market',market,'count',count,'first',first[:3] if first else first)
-                          api.disconnect(); break
-                  except Exception as e:
-                      print(host,port,'FAILED',type(e).__name__,str(e))
-                      try: api.disconnect()
-                      except Exception: pass
-          except Exception:
-              traceback.print_exc()
+          print('\n=== pytdx bars ===',flush=True)
+          for market,code in ((1,'600519'),(0,'000001'),(0,'002594')):
+            for host,port in servers:
+              api=TdxHq_API(heartbeat=False,auto_retry=False,raise_exception=True)
+              try:
+                api.connect(host,port,time_out=4)
+                bars=api.get_security_bars(9,market,code,0,50)
+                print(code,host,port,'bars',len(bars or []),'first',(bars or [])[:1],'last',(bars or [])[-1:] ,flush=True)
+                api.disconnect(); break
+              except Exception as e:
+                print(code,host,port,'FAILED',type(e).__name__,str(e),flush=True)
+                try: api.disconnect()
+                except Exception: pass
           PY
 
       - name: Commit diagnostics
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add scan_results/terminal_wedge_20260801/universe_diagnostics.txt
-          git commit -m "diag: inspect A-share universe sources [skip ci]" || true
+          git add scan_results/terminal_wedge_20260801/market_data_diagnostics.txt
+          git commit -m "diag: test market data sources [skip ci]" || true
           git push origin HEAD:terminal-wedge-scan-20260801
