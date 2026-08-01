@@ -1,0 +1,38 @@
+name: Inspect Terminal Wedge Runs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/inspect-terminal-wedge-runs.yml'
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: terminal-wedge-scan-20260801
+          fetch-depth: 0
+      - name: List recent workflow runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p scan_results/terminal_wedge_20260801
+          gh api \
+            -H 'Accept: application/vnd.github+json' \
+            '/repos/${{ github.repository }}/actions/runs?per_page=30' \
+            --jq '.workflow_runs[] | [.id,.name,.event,.status,.conclusion,.head_sha,.created_at,.updated_at,.html_url] | @tsv' \
+            > scan_results/terminal_wedge_20260801/recent_workflow_runs.tsv
+          cat scan_results/terminal_wedge_20260801/recent_workflow_runs.tsv
+      - name: Commit inspection
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add scan_results/terminal_wedge_20260801/recent_workflow_runs.tsv
+          git commit -m 'diag: record recent workflow runs [skip ci]' || true
+          git push origin HEAD:terminal-wedge-scan-20260801
