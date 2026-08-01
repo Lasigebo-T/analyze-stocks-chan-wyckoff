@@ -1,4 +1,4 @@
-name: Probe Official SSE Symbol List
+name: Run Robust Terminal Wedge Scan
 
 on:
   push:
@@ -10,44 +10,60 @@ permissions:
   contents: write
 
 jobs:
-  probe:
+  scan:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 240
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout scan implementation
+        uses: actions/checkout@v4
         with:
           ref: terminal-wedge-scan-20260801
           fetch-depth: 0
-      - uses: actions/setup-python@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - run: python -m pip install requests
-      - name: Probe SSE list
+
+      - name: Install dependencies
         run: |
-          mkdir -p scan_results/terminal_wedge_20260801
-          python - <<'PY' 2>&1 | tee scan_results/terminal_wedge_20260801/sse_list_probe.txt
-          import re, requests, traceback
-          urls=['https://www.sse.com.cn/js/common/ssesuggestdata.js','http://www.sse.com.cn/js/common/ssesuggestdata.js']
-          for url in urls:
-            try:
-              r=requests.get(url,headers={'User-Agent':'Mozilla/5.0','Referer':'https://www.sse.com.cn/'},timeout=20)
-              r.encoding=r.apparent_encoding or 'utf-8'
-              print('url',url,'status',r.status_code,'bytes',len(r.content),'encoding',r.encoding)
-              print('head',repr(r.text[:500]))
-              patterns=[
-                r'val\s*:\s*["\'](\d{6})["\']\s*,\s*val2\s*:\s*["\']([^"\']+)',
-                r'val\s*:\s*"(\d{6})".*?val2\s*:\s*"([^"]+)"',
-              ]
-              for p in patterns:
-                m=re.findall(p,r.text)
-                print('pattern',p,'matches',len(m),'sample',m[:10])
-            except Exception:
-              traceback.print_exc()
-          PY
-      - name: Commit probe
+          python -m pip install --upgrade pip
+          python -m pip install pandas numpy matplotlib requests urllib3 openpyxl tabulate pytdx
+
+      - name: Run Shanghai and Shenzhen main-board scan
+        env:
+          PYTHONUNBUFFERED: '1'
+        run: |
+          rm -rf scan_results/terminal_wedge_20260801
+          python tools/terminal_wedge/run_full_scan.py \
+            --count 340 \
+            --max-workers 8 \
+            --min-score 42 \
+            --top-charts 25 \
+            --output scan_results/terminal_wedge_20260801
+          {
+            echo "workflow_run=${GITHUB_RUN_ID}"
+            echo "workflow_attempt=${GITHUB_RUN_ATTEMPT}"
+            echo "source_commit=${GITHUB_SHA}"
+            echo "generated_at_utc=$(date -u +%FT%TZ)"
+          } > scan_results/terminal_wedge_20260801/run_metadata.txt
+
+      - name: Upload scan artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: terminal-wedge-scan-20260801
+          path: scan_results/terminal_wedge_20260801
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Commit scan results to branch
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add scan_results/terminal_wedge_20260801/sse_list_probe.txt
-          git commit -m "diag: probe SSE symbol list [skip ci]" || true
-          git push origin HEAD:terminal-wedge-scan-20260801
+          git add scan_results/terminal_wedge_20260801
+          if git diff --cached --quiet; then
+            echo "No result changes"
+          else
+            git commit -m "data: robust terminal wedge scan results 2026-08-01 [skip ci]"
+            git push origin HEAD:terminal-wedge-scan-20260801
+          fi
