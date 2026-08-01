@@ -1,0 +1,15 @@
+=== Eastmoney clist ===
+
+=== Public indicator workbook ===
+
+=== AKShare lists ===
+stock_info_a_code_name FAILED ConnectionError ('Connection aborted.', ConnectionResetError(104, 'Connection reset by peer'))
+stock_zh_a_spot_em FAILED ConnectionError ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))
+
+=== pytdx code tables ===
+119.147.212.81 7709 FAILED TdxConnectionError connection timeout error
+47.103.48.45 7709 FAILED TdxConnectionError connection timeout error
+124.71.187.72 7709 connect <pytdx.hq.TdxHq_API object at 0x7f256b739650>
+ market 0 count 23890 first [OrderedDict([('code', '395001'), ('volunit', 100), ('decimal_point', 2), ('name', '主板Ａ股'), ('pre_close', 1493.0)]), OrderedDict([('code', '395002'), ('volunit', 100), ('decimal_point', 2), ('name', '主板Ｂ股'), ('pre_close', 128.0)]), OrderedDict([('code', '395004'), ('volunit', 100), ('decimal_point', 2), ('name', '创业板'), ('pre_close', 1400.0)])]
+124.71.187.72 7709 FAILED TdxFunctionCallError calling function error
+218.108.47.69 7709 FAILED TdxConnectionError connection timeout error
