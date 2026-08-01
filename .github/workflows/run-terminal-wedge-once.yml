@@ -1,4 +1,4 @@
-name: Diagnose A-Share Market Data
+name: Probe Official SSE Symbol List
 
 on:
   push:
@@ -10,103 +10,44 @@ permissions:
   contents: write
 
 jobs:
-  diagnose:
+  probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 10
     steps:
-      - name: Checkout scan branch
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           ref: terminal-wedge-scan-20260801
           fetch-depth: 0
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-
-      - name: Install dependencies
-        run: python -m pip install pandas requests openpyxl pytdx
-
-      - name: Test HTTP and TDX sources
-        env:
-          PYTHONUNBUFFERED: '1'
+      - run: python -m pip install requests
+      - name: Probe SSE list
         run: |
           mkdir -p scan_results/terminal_wedge_20260801
-          python - <<'PY' 2>&1 | tee scan_results/terminal_wedge_20260801/market_data_diagnostics.txt
-          import traceback, requests
-          import pandas as pd
-          from pytdx.hq import TdxHq_API
-
-          print('=== HTTP probes ===', flush=True)
-          urls=[
-            ('tencent','https://web.ifzq.gtimg.cn/appstock/app/fqkline/get',{'param':'sh600519,day,,,20,qfq'}),
-            ('eastmoney','https://push2his.eastmoney.com/api/qt/stock/kline/get',{'secid':'1.600519','klt':101,'fqt':1,'lmt':20,'end':20500101,'fields1':'f1,f2,f3,f4,f5,f6','fields2':'f51,f52,f53,f54,f55,f56,f57'}),
-            ('universe','https://82.push2.eastmoney.com/api/qt/clist/get',{'pn':1,'pz':10,'po':1,'np':1,'fltt':2,'invt':2,'fid':'f3','fs':'m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23','fields':'f12,f14,f2'})
-          ]
-          for name,url,params in urls:
+          python - <<'PY' 2>&1 | tee scan_results/terminal_wedge_20260801/sse_list_probe.txt
+          import re, requests, traceback
+          urls=['https://www.sse.com.cn/js/common/ssesuggestdata.js','http://www.sse.com.cn/js/common/ssesuggestdata.js']
+          for url in urls:
             try:
-              r=requests.get(url,params=params,headers={'User-Agent':'Mozilla/5.0','Referer':'https://quote.eastmoney.com/'},timeout=15)
-              print(name,'status',r.status_code,'bytes',len(r.content),'head',repr(r.text[:250]),flush=True)
+              r=requests.get(url,headers={'User-Agent':'Mozilla/5.0','Referer':'https://www.sse.com.cn/'},timeout=20)
+              r.encoding=r.apparent_encoding or 'utf-8'
+              print('url',url,'status',r.status_code,'bytes',len(r.content),'encoding',r.encoding)
+              print('head',repr(r.text[:500]))
+              patterns=[
+                r'val\s*:\s*["\'](\d{6})["\']\s*,\s*val2\s*:\s*["\']([^"\']+)',
+                r'val\s*:\s*"(\d{6})".*?val2\s*:\s*"([^"]+)"',
+              ]
+              for p in patterns:
+                m=re.findall(p,r.text)
+                print('pattern',p,'matches',len(m),'sample',m[:10])
             except Exception:
-              print(name,'FAILED',flush=True); traceback.print_exc()
-
-          print('\n=== workbook probe ===', flush=True)
-          raw='https://raw.githubusercontent.com/89529738/ashare-public-data/main/data/股票池合并_核准_技术指标_latest.xlsx'
-          try:
-            r=requests.get(raw,timeout=30); print('raw status',r.status_code,'bytes',len(r.content),flush=True)
-            open('/tmp/ind.xlsx','wb').write(r.content)
-            xf=pd.ExcelFile('/tmp/ind.xlsx'); print('sheets',xf.sheet_names,flush=True)
-            df=pd.read_excel('/tmp/ind.xlsx',nrows=5,dtype=str)
-            print('columns',list(df.columns),flush=True); print(df.to_string(index=False),flush=True)
-          except Exception:
-            traceback.print_exc()
-
-          print('\n=== pytdx robust probes ===', flush=True)
-          servers=[('124.71.187.72',7709),('119.147.212.81',7709),('47.103.48.45',7709),('218.108.47.69',7709),('106.14.95.149',7711),('115.238.56.198',7709)]
-          for market in (0,1):
-            print('MARKET',market,flush=True)
-            success=False
-            for host,port in servers:
-              api=TdxHq_API(heartbeat=False,auto_retry=False,raise_exception=True)
-              try:
-                api.connect(host,port,time_out=4)
-                count=api.get_security_count(market)
-                rows=[]
-                for start in (0,1000,2000,3000,4000,5000):
-                  chunk=api.get_security_list(market,start) or []
-                  rows.extend(chunk)
-                  print(host,port,'start',start,'chunk',len(chunk),flush=True)
-                  if len(chunk)<1000: break
-                print(host,port,'count',count,'fetched',len(rows),'sample',rows[:5],flush=True)
-                filt=[x for x in rows if str(x.get('code','')).startswith(('000','001','002','003','600','601','603','605'))]
-                print('filtered',len(filt),'sample',filt[:10],flush=True)
-                api.disconnect(); success=True; break
-              except Exception as e:
-                print(host,port,'FAILED',type(e).__name__,str(e),flush=True)
-                try: api.disconnect()
-                except Exception: pass
-            print('success',success,flush=True)
-
-          print('\n=== pytdx bars ===',flush=True)
-          for market,code in ((1,'600519'),(0,'000001'),(0,'002594')):
-            for host,port in servers:
-              api=TdxHq_API(heartbeat=False,auto_retry=False,raise_exception=True)
-              try:
-                api.connect(host,port,time_out=4)
-                bars=api.get_security_bars(9,market,code,0,50)
-                print(code,host,port,'bars',len(bars or []),'first',(bars or [])[:1],'last',(bars or [])[-1:] ,flush=True)
-                api.disconnect(); break
-              except Exception as e:
-                print(code,host,port,'FAILED',type(e).__name__,str(e),flush=True)
-                try: api.disconnect()
-                except Exception: pass
+              traceback.print_exc()
           PY
-
-      - name: Commit diagnostics
+      - name: Commit probe
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add scan_results/terminal_wedge_20260801/market_data_diagnostics.txt
-          git commit -m "diag: test market data sources [skip ci]" || true
+          git add scan_results/terminal_wedge_20260801/sse_list_probe.txt
+          git commit -m "diag: probe SSE symbol list [skip ci]" || true
           git push origin HEAD:terminal-wedge-scan-20260801
