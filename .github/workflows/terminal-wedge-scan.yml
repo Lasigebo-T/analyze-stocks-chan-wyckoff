@@ -13,7 +13,7 @@ permissions:
 
 concurrency:
   group: terminal-wedge-scan-20260801
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   scan:
@@ -35,18 +35,18 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install pandas numpy matplotlib requests urllib3 openpyxl tabulate
+          python -m pip install pandas numpy matplotlib requests urllib3 openpyxl tabulate pytdx
 
       - name: Scan Shanghai and Shenzhen main boards
         env:
           PYTHONUNBUFFERED: '1'
         run: |
           rm -rf scan_results/terminal_wedge_20260801
-          python tools/terminal_wedge/scan_terminal_wedge.py \
+          python tools/terminal_wedge/run_full_scan.py \
             --count 340 \
             --max-workers 8 \
-            --min-score 50 \
-            --top-charts 20 \
+            --min-score 42 \
+            --top-charts 25 \
             --output scan_results/terminal_wedge_20260801
 
       - name: Add run metadata
@@ -78,6 +78,6 @@ jobs:
           if git diff --cached --quiet; then
             echo "No result changes to commit"
           else
-            git commit -m "data: terminal wedge scan results 2026-08-01 [skip ci]"
+            git commit -m "data: terminal wedge full-market results 2026-08-01 [skip ci]"
             git push origin HEAD:terminal-wedge-scan-20260801
           fi
